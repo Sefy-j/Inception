@@ -1,0 +1,100 @@
+INSTALACION FTP: VSFTPD 
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+PARTE 1: CREACIÓN DE DOCKERFILE
+
+	- FROM: De nuevo usaremos alpine, una versión anterior a la última.
+	- ARG: Añadimos las dos variables de usuario y contraseña de usuario que necesitaremos.
+	- RUN: Instalaremos VSFTPD. Es un servidor de transmisión de archivos mediante protocolo FTP, por el que el servidor recibe
+			una petición de conexión de un usuario, que podrá iniciar un protocolo de transferencia de los archivos solicitados.
+			Por ejemplo, en el caso de Wordpress es el método utilizado por el cliente para añadir plugins u otros archivos al
+			servidor. Además, crearemos un usuario con las credenciales deseadas, de modo que su carpeta home (-h var/www) sea
+			la carpeta madre donde van a estar los archivos de wordpress. Esto es así porque por seguridad, el servidor de FTP
+			va a ser configurado de modo que el usuario este encerrado en su carpeta home, de modo que no pueda acceder al resto
+			del sistema desde el FTP. Generaremos el usuario además sin acceso a una shell para mayor seguridad (-s /bin/false),
+			y le daremos la contraseña mediante un pipe al comando chpasswd. Por último, también por seguridad para evitar un
+			tipo de ataque al servidor, la carpeta home donde va a estar encerrado el usuario no debe ser modificable.
+	- COPY: Copiamos tanto el archivo de configuración como la script de inicio que debemos utilizar al sistema, con los permisos
+			adecuados para poder ejecutar dicha script. El archivo de configuración por defecto será sobreescrito por el nuestro.
+	- EXPOSE: Por defecto VSFTPD utiliza el puerto 21 para iniciar el protocolo de transferencia. Además, por el funcionamiento
+			del protocolo actualmente, el sistema utilizado es el FTP pasivo, por lo que añadiremos un rango de puertos lo
+			suficientemente amplio para dicho protocolo.
+	- ENTRYPOINT: Debido a que debemos utilizar una script, el entrypoint será dicho archivo.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+PARTE 2: ARCHIVO CONFIGURACIÓN FTP
+
+	La configuración del VSFTPD puede modificarse mediante el archivo vsftpd.conf, existente en la carpeta /etc/vsftpd
+	En nuestro caso utilizaremos un archivo propio que sobreescribirá el archivo por defecto.
+
+	- anonymous_enable=NO: Eliminamos la posibilidad de conectarse al servidor sin autenticación. En nuestro caso sólo queremos
+		que la conexión se realice mediante el usuario que hemos creado.
+	- xferlog_enable=YES: Se añade un log de las carpetas creadas, descargadas, etc.
+	- listen=YES: El servidor escuchará en el puerto 21 del protocolo Ipv4.
+	- local_enable=YES: Permitimos la conexión utilizando las credenciales de los usuarios locales.
+	- write_enable=YES: Permitimos permisos de escritura mediante FTP.
+	- chroot_local_user=YES: Chroot sirve para encerrar a un usuario en su carpeta home, de modo que no pueda acceder a ningún
+		otro archivo fuera de dicha carpeta. Esto sirve por seguridad para evitar el acceso a todo el sistema a través de la
+		conexión FTP. Sin embargo, es importante tener en cuenta para evitar una vulnerabilidad de seguridad, la carpeta home
+		de dicho usuario debe estar protegida contra escritura. Las carpetas inferiores si pueden ser modificables sin embargo.
+	- pasv_enable=YES: El sistema FTP tiene dos métodos básicos de conexión. El método activo, original cuando se ideó el
+		protocolo, y el modo pasivo. En el modo activo, el cliente lanza una petición a través del puerto 21 del servidor,
+		y este, tras aceptarlo, lanza una petición de conexión a una serie de puertos al azar de rango alto del cliente, a
+		través de los que se realizará el envío de archivos. Sin embargo, debido a la existencia de Firewalls y redes NAT,
+		actualmente este tipo de conexión suele resultar muy propensa a fallos, ya que estas peticiones son generalmente
+		denegadas automaticamente. Debido a esto ahora es más utilizado el modo pasivo, donde es el cliente el que lanza las
+		peticiones a los puertos al azar de rango alto del servidor, evitando así los bloqueos por Firewalls. Activamos por
+		lo tanto dicho método.
+	- pasv_min_port=4000: Permite señalar el rango inferior de puertos para el modo pasivo.
+	- pasv_max_port=4242: Rango máximo de puertos del modo pasivo.
+	- seccomp_sandbox=NO: Se trata de una función del VSFTPD que debido a un error puede provocar fallos en la conexión. Debido
+		a esto la desactivamos.
+	
+	Por último, es interesante tener en cuenta que por defecto el sistema FTP no esta protegido, de modo que todos los datos son
+	enviados sin encriptar. Es posible añadir el protocolo TLS al sistema para mayor protección, pero en nuestro caso queda
+	fuera del alcance del proyecto, ya que el objetivo de este servicio es simplemente generar un método más sencillo
+	para modificar los archivos de Wordpress localmente. Además, en otros casos puede ser interesante la creación de usuarios
+	virtuales que puedan conectarse al sistema, cada uno con sus propias credenciales y carpetas home. Para ello es interesante
+	el uso de algún tipo de libreria como PAM, que nos permitirá generar dichos usuarios.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+PARTE 3: SCRIPT EJECUCIÓN DEL SISTEMA
+
+	Se trata de una script muy sencilla para lanzar el servidor, donde sólo ejecutamos un comando previo al lanzamiento del
+	propio servidor.
+
+	- chown -R $FTP_USER:$FTP_USER /var/www/wordpress: Debido al funcionamiento de Docker, al estar obligados a generar los
+		volúmenes como "bind" a una carpeta local en lugar del método aconsejado de crearlos como volúmenes propios de Docker,
+		existe un problema de permisos. Al generar el volumen y montarlo dentro del contenedor el sistema modifica los 
+		permisos de dicha carpeta internamente, de modo que el usuario pasa a ser un usuario dependiente del host. Así, y con
+		los permisos que obtienen estas carpetas, el usuario que hemos creado es incapaz de modificarlas. Debido a que esto
+		sucede justo antes del lanzamiento del contenedor, no podemos modificar los permisos durante la fase de montaje,
+		teniendo que hacerlo como primera acción en el lanzamiento del mismo. Es importante señalar que además de por este
+		tipo de problemas de permisos de usuario, Docker aconseja utilizar volúmenes propios con nombre, es decir, gestionados
+		por el propio Docker Engine, para evitar problemas de portabilidad, ya que en el caso de no existencia de las carpetas
+		deseadas en el host, tendremos un error de nuestro contendor. Por lo tanto, salvo que sea estrictamente necesario, es
+		más interesante evitar el uso de volumenes bindeados.
+	- exec /usr/sbin/vsftpd /etc/vsftpd/vsftpd.conf: Lanzamos el servidor como tal, mediante el comando exec para que el programa
+		del servidor VSFTPD sustituya como programa principal (PID 1) a la shell, de modo que pueda recibir las señales
+		adecuadas, etc.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+REFERENCIAS
+
+https://github.com/delfer/docker-alpine-ftp-server
+https://www.digitalocean.com/community/tutorials/how-to-set-up-vsftpd-for-a-user-s-directory-on-ubuntu-18-04
+https://www.redeszone.net/tutoriales/servidores/vsftpd-configuracion-servidor-ftp/
+https://sio2sio2.github.io/doc-linux/07.serre/01.ftp/02.vsftpd.html
+
+https://www.hiroom2.com/2017/08/22/alpinelinux-3-6-vsftpd-en/
+http://vsftpd.beasts.org/vsftpd_conf.html
+
+https://askubuntu.com/questions/239239/error-message-500-oops-vsftpd-refusing-to-run-with-writable-root-inside-chroo
+https://askubuntu.com/questions/575523/how-to-setup-virtual-users-for-vsftpd-with-access-to-a-specific-sub-directory

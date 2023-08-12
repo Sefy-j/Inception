@@ -1,0 +1,39 @@
+INSTALACION ADMINER
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+PARTE 1: CREACIÓN DE DOCKERFILE
+
+	- FROM: De nuevo usaremos alpine, una versión anterior a la última.
+	- WORKDIR: Utilizamos la dirección donde instalaremos adminer.
+	- RUN: Instalaremos adminer de modo que sea utilizado a través de php-fpm. Así, instalamos los mismos paquetes que en el
+			contenedor de wordpress, añadiendo php-session que es necesario para el propio adminer. Además, descargaremos
+			el archivo php de adminer, llamándolo index.php para que funcione con nuestra configuración de nginx. Por último,
+			generamos nuestro usuario para no ejecutar el servidor como root, le daremos permisos, y elminaremos la
+			configuración estándar de php-fpm. Adminer por su parte es un único archivo php que permite modificar bases de datos
+			mediante una interfaz gráfica, evitando así tener que hacer querys a mysql directamente. Una vez instalada, solo
+			debemos acceder a nuestra url añadiendo /adminer, y allí introducir las credenciales de nuestra base de datos.
+			Utilizamos este método en lugar de otra forma típica de instalación, que consiste en abrir directamente el puerto
+			que utiliza adminer para hacer una conexión directa. Así logramos que esta conexión sea también mediante SSL.
+	- COPY: Copiamos la configuración de nuestro php-fpm en la carpeta y con los permisos adecuados.
+	- ENTRYPOINT: Ejecutamos php-fpm, con el flag -F para evitar que se ejecute como daemon, haciendo que se mantenga siempre
+			como proceso principal en primer plano.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+PARTE 2: ARCHIVO CONFIGURACIÓN ADMINER
+
+	Utilizaremos el mismo archivo de configuración que usamos en el caso de worpdress, pero modificando el nombre del usuario
+	que va a ejecutar el servidor por el que hemos creado en este contenedor.
+	Por otro lado, hemos de modificar la configuración de nginx para poder aceptar las peticiones a adminer, de modo que sean
+	redirigidas a nuestro servidor de php-fpm.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+REFERENCIAS
+
+https://www.adminer.org/
+
+https://stackoverflow.com/questions/67711718/redirect-from-one-folder-into-another-using-nginx

@@ -1,0 +1,25 @@
+baseURL = "https://jlopez-f.42.fr/static"
+theme = "m10c"
+title = "Inception"
+canonifyURLs = true
+
+[menu]
+  [[menu.main]]
+    identifier = "home"
+    name = "Inicio"
+    url = "/"
+    weight = 1
+  [[menu.main]]
+    identifier = "about"
+    name = "Sobre mi"
+    url = "/about"
+    weight = 2
+
+[params]
+  author = "Javier López"
+  description = "Estudiante 42Madrid"
+  menu_item_separator = " - "
+  [[params.social]]
+    icon = "github"
+    name = "Github"
+    url = "https://github.com/Sefy-j"

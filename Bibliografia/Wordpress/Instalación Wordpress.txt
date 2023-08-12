@@ -1,0 +1,103 @@
+INSTALACION WORDPRESS Y PHP-FPM
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+PARTE 1: CREACIÓN DE DOCKERFILE
+
+	- FROM: De nuevo usaremos alpine, una versión anterior a la última.
+	- WORKDIR: Como vamos a instalar wordpress en /var/www/wordpress tal, señalamos /var/www como la carpeta raiz sobre la que
+			ejecutaremos todos los comandos.
+	- RUN: Instalaremos php, en nuestro caso la versión 8.2, así como php-fpm, y todos los distintos paquetes necesarios para
+			el funcionamiento de wordpress de acuerdo a su guia de instalación. Php-fpm es el gestor de procesos de FastCGI
+			que utilizaremos para conectar las peticiones recibidas a partir de nginx, con la aplicación de php de
+			wordpress. Además, instalaremos wget y tar para poder descargar el cliente de wordpress y extraerlo en la carpeta
+			adecuada, borrando posteriormente el archivo comprimido, junto con las configuraciones por defecto de wordpress y
+			de php-fpm. Por otro lado, descargaremos también el plugin de redis cache, del mismo modo que con el propio
+			wordpress, y lo moveremos a la carpeta adecuada en la sección de plugins. Además, por seguridad generaremos un
+			usuario para el servidor de wordpress, y le haremos dueño de dichos archivos, así como de todos los relacionados
+			con wordpress. Dicho usuario no tendrá acceso a una shell (-s /bin/false).
+	- COPY: Por defecto php-fpm genera una configuración base (www.conf). Sin embargo, por motivos de seguridad es interesante
+			utilizar la capacidad de generar "pools" de php independientes, de modo que cada aplicación se encuentre aislada
+			y no pueda interferir con otros archivos. Así, en lugar de modificar el archivo base con nuestra configuración,
+			generaremos uno nuevo que añadiremos a la carpeta adecuada (/etc/php81/php-fpm.d) para generar este nuevo pool.
+			Del mismo modo, añadiremos nuestro archivo de configuración de wordpress a la carpeta correspondiente, ambos
+			con los permisos adecuados.
+	- ENTRYPOINT: Ejecutamos php-fpm, con el flag -F para evitar que se ejecute como daemon, haciendo que se mantenga siempre
+			como proceso principal en primer plano.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+PARTE 2: ARCHIVO CONFIGURACIÓN PHP-FPM
+
+	Php-fpm utiliza un sistema de pools para poder compartimentar múltiples dominios, de modo que cada uno sea ejecutado por un
+	usuario distinto, que no podrá acceder a los archivos, bases de datos o configuraciones distintas a las suyas. Para ello
+	debemos crear un usuario único por dominio, así como un grupo individual para cada uno. Hay múltiples opciones posibles,
+	pero las principales que debemos ajustar son las siguientes:
+	
+	- [wordpress_site]: Permite configurar el nombre de la pool. Ha de ser único.
+	- user = wordpress_user: Señala el usuario que ejecutará la pool. En nuestro caso será el usuario creado para ello.
+	- group = wordpress_user: Del mismo modo, aquí señalaremos el grupo del usuario sin privilegios que hemos creado.
+	- listen = 0.0.0.0:9000: Sirve para configurar la dirección ip, puerto o socket de unix en el que se conectará el php-fpm.
+			En nuestro caso, añadimos la opción de ip default (0.0.0.0) y el puerto 9000 para señalar que escucharemos en cualquier
+			ip, en el puerto 9000, ya que docker selecciona una ip distinta en cada ejecución.
+	- listen.owner = nginx: Define el dueño de la conexión a escuchar. Puesto que nginx debe ser capaz de utilizarlo, este valor
+			ha de ser el usuario que ejecuta nginx, en nuestro caso llamado nginx.
+	- listen.group = nginx: De nuevo, debemos señalar el grupo que ejecuta nginx.
+	- php_admin_value[disable_functions] = exec,passthru,shell_exec,system: Este comando permite desactivar diversas funciones
+			de php. En nuestro caso desactivamos por seguridad aquellas que no son necesarias pero que pueden llegar a suponer una
+			brecha de seguridad.
+	- php_admin_flag[allow_url_fopen] = off: Similar a la opción anterior, en este caso desactivamos la capacidad de abrir
+			archivos remotos directamente a través de php.
+	- pm = dynamic: Las configuraciones del process manager permiten modificar el funcionamiento del número de procesos hijos
+			que utilizará el sistema, así como otro tipo de elementos. En nuestro caso utilizaremos un sistema dinamico, de modo
+			que se generen procesos de acuerdo a las necesidades de cada momento.
+	- pm.max_children = 5: Número máximo de hijos que pueden mantenerse a la vez.
+	- pm.start_servers = 2: Número de hijos creados al inicio.
+	- pm.min_spare_servers = 1: Número mínimo de hijos en estado de espera.
+	- pm.max_spare_servers = 3: Número máximo de hijos en estado de espera.
+	- clear_env = no : Por defecto php-fpm borra las variables de entorno, pero como queremos poder
+			utilizarlas, declaramos aqui que no las elimine.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+PARTE 3: ARCHIVO CONFIGURACIÓN WORDPRESS
+
+	Si bien podemos modificar el archivo de configuración de ejemplo, es más interesante incluir nuestro propio archivo de
+	configuración. De nuevo existen múltiples posibilidades distintas, pero vamos a utilizar la configuración más básica. Todas
+	las variables de usuarios, contraseñas, etc las incluiremos a través de nuestro archivo de variables de entorno. Para ello
+	utilizaremos la función getenv(), que admite una string entre comillas con el nombre de una variables de entorno,
+	devolviendo su valor. Es importante que tanto sus argumentos como los de los define estén entre comillas. Existen
+	diversas líneas de configuración que no es necesario modificar, aunque si deben existir. Así, las que debemos utilizar son
+	las siguientes:
+
+	- define( 'DB_NAME', getenv('WP_DB_NAME') ): Define el nombre de la propia base de datos a utilizar.
+	- define( 'DB_USER', getenv('MADB_USER') ): Se trata del nombre de usuario de la base de datos. No debe ser usuario root.
+	- define( 'DB_PASSWORD', getenv('MADB_PASSW') ): Contraseña de la base de datos.
+	- define( 'DB_HOST', 'mariadb:3306' ): Permite señalar el host donde va a encontrarse la base de datos. Al estar en otro
+			contenedor dentro de la misma network de docker, podemos referirnos a el directamente por el nombre de
+			mariadb, añadiendo el puerto adecuado, ya que este es un nombre existente en el archivo dns de hostnames.
+	- define( 'WP_REDIS_HOST', 'redis' ); : Para el bonus, es necesario señalar el host donde va a encontrarse el servicio
+			de redis. Del mismo modo que con mariadb, vale con llamarlo por su nombre. El puerto a usar será el por defecto,
+			por lo que no es necesario añadirlo.
+	- define( 'WP_REDIS_PREFIX', getenv('WP_DB_NAME') ); : Sirve para evitar posibles coincidencias en nombres si
+			estuviesemos usando diversas bases de datos.
+	- Bloque de contraseñas y SALTs: Se trata de distintas contraseñas secretas y sus respectivos SALT (una serie de bits
+			extra aleatorios que se añaden como capa extra de protección antes de encriptar las contraseñas). Permiten tener
+			una capa extra de seguridad. En nuestro caso utilizaremos un generador de claves aleatorias proporcionada por el
+			propio wordpress para añadir nuestras propias claves, que podrán ser modificadas en el archivo de variables de
+			entorno correspondiente.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+REFERENCIAS
+
+https://make.wordpress.org/hosting/handbook/server-environment/
+
+https://www.digitalocean.com/community/tutorials/php-fpm-nginx
+https://www.digitalocean.com/community/tutorials/how-to-host-multiple-websites-securely-with-nginx-and-php-fpm-on-ubuntu-14-04
+
+https://developer.wordpress.org/apis/wp-config-php/
+https://api.wordpress.org/secret-key/1.1/salt/

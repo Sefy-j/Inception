@@ -1,0 +1,135 @@
+version: "3.9"
+
+services:
+
+  nginx:
+    container_name: nginx
+    build:
+      context: ./requirements/nginx
+      args:
+        DOMAIN_NAME: ${DOMAIN_NAME}
+    ports:
+      - "443:443"
+    depends_on:
+      - wordpress
+      - hugo
+    volumes:
+      - wordpress:/var/www/wordpress
+      - adminer:/var/www/adminer
+    networks:
+      - nginx-php
+      - nginx-hugo
+    restart: always
+
+  wordpress:
+    container_name: wordpress
+    build: ./requirements/wordpress
+    depends_on:
+      - mariadb
+    environment:
+      MADB_USER: ${MADB_USER}
+      MADB_PASSW: ${MADB_PASSW}
+      WP_DB_NAME: ${WP_DB_NAME}
+      AUTH_KEY: ${AUTH_KEY}
+      SECURE_AUTH_KEY: ${SECURE_AUTH_KEY}
+      LOGGED_IN_KEY: ${LOGGED_IN_KEY}
+      NONCE_KEY: ${NONCE_KEY}
+      AUTH_SALT: ${AUTH_SALT}
+      SECURE_AUTH_SALT: ${SECURE_AUTH_SALT}
+      LOGGED_IN_SALT: ${LOGGED_IN_SALT}
+      NONCE_SALT: ${NONCE_SALT}
+    volumes:
+     - wordpress:/var/www/wordpress
+    networks:
+      - nginx-php
+      - php-database
+    restart: always
+
+  mariadb:
+    container_name: mariadb
+    build:
+      context: ./requirements/mariadb
+      args:
+        MADB_ROOT_PASSW: ${MADB_ROOT_PASSW}
+        MADB_USER: ${MADB_USER}
+        MADB_PASSW: ${MADB_PASSW}
+        WP_DB_NAME: ${WP_DB_NAME}
+    volumes:
+      - database:/var/lib/mysql
+    networks:
+      - php-database
+    restart: always
+
+  redis:
+    container_name: redis
+    build: ./requirements/bonus/redis
+    depends_on:
+      - wordpress
+    networks:
+      - php-database
+    restart: always
+
+  ftp:
+    container_name: ftp
+    build:
+      context: ./requirements/bonus/ftp
+      args:
+        FTP_USER: ${FTP_USER}
+        FTP_PASSW: ${FTP_PASSW}
+    ports:
+      - "21:21"
+      - "4000-4242:4000-4242"
+    depends_on:
+      - wordpress
+    environment:
+      FTP_USER: ${FTP_USER}
+    volumes:
+      - wordpress:/var/www/wordpress
+    restart: always
+
+  adminer:
+    container_name: adminer
+    build: ./requirements/bonus/adminer
+    depends_on:
+      - mariadb
+    volumes:
+      - adminer:/var/www/adminer
+    networks:
+      - nginx-php
+      - php-database
+    restart: always
+
+  hugo:
+    container_name: hugo
+    build:
+      context: ./requirements/bonus/hugo
+      args:
+        HUGO_THEME_NAME: ${HUGO_THEME_NAME}
+        HUGO_THEME_GIT: ${HUGO_THEME_GIT}
+    environment:
+      DOMAIN_NAME: ${DOMAIN_NAME}
+    networks:
+      - nginx-hugo
+    restart: always
+
+networks:
+  nginx-php:
+  php-database:
+  nginx-hugo:
+
+volumes:
+  wordpress:
+    driver_opts:
+      type: none
+      device: /home/${USER_NAME}/data/wordpress
+      o: bind
+  adminer:
+    driver_opts:
+      type: none
+      device: /home/${USER_NAME}/data/adminer
+      o: bind
+  database:
+    driver_opts:
+      type: none
+      device: /home/${USER_NAME}/data/database
+      o: bind

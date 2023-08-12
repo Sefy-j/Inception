@@ -1,0 +1,130 @@
+INSTALACION DEBIAN EN VIRTUAL BOX
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+PARTE 1: CREACIÓN DE MAQUINA VIRTUAL
+
+	- Crear carpeta en sgoinfree/nuestrousuario
+	- Descargar iso Debian de la página web propia
+	- Virtual Box --> Nueva --> Memoria(Default) --> Disco Duro VDI (30.8Gb) #Guardo en sgoinfree
+	- Configuración-->Red-->Adaptador puente
+	- Configuración-->Pantalla-->VBoxVGA #Evita un bug al iniciar la máquina
+	- Seleccionamos la .iso como disco de arranque
+	- Inicializamos
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+PARTE 2: INSTALACION DEBIAN Y PARTICIONES
+
+	- Install
+	- Idioma, localización, y idioma de teclado (locale configuration)
+	- Hostname: "login42", usuario: "login", y contraseña y contraseña del root
+	- Zona horaria
+	- Particiones: Default
+	- Seleccionamos el mirror desde donde descargara los paquetes el apt
+	- Seleccionamos paquete de SSH y interfaz grafica preferida
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+PARTE 3: INSTALACION APLICACIONES
+
+	- Apt update
+	- Instalamos los paquetes necesarios: apt install
+		sudo: Permite el uso de Sudo
+		net-tools: Herramientas de red
+		ufw: Firewall
+		make: Permite el uso de makefiles
+		firefox-esr: Navegador web
+		filezilla: Cliente FTP para comprobar uno de los bonus
+		docker y docker compose:
+			- Añadimos el repositorio de docker a la lista de repositorios de apt:
+				sudo apt-get update
+				sudo apt-get install ca-certificates curl gnupg
+				sudo install -m 0755 -d /etc/apt/keyrings
+				curl -fsSL https://download.docker.com/linux/debian/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+				sudo chmod a+r /etc/apt/keyrings/docker.gpg
+				echo \
+				"deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian \
+				"$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
+				sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+			- Instalamos Docker Engine, con todo lo necesario:
+				sudo apt-get update
+				sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+	- Configuración básica:
+		sudo: 
+			sudo adduser usuario sudo		#Añadimos el usuario al grupo sudo
+			sudo reboot y sudo -v			#Reboot para cambios y comprobamos los sudopowers
+		ufw: 
+			ufw enable
+			systemctl enable ufw		#Activamos que se lance el ufw en cada inicio
+			ufw status					#Muestra los puertos
+			ufw allow 42 443			#Permitimos el puerto 42 para el SSH y el 443 https para nginx
+		ssh:
+			systemctl enable sshd
+			nano /etc/ssh/sshd_config 
+				Port 22 --> Port 42 		#Cambiamos el puerto por defecto que usa el SSH por el 42
+				PermiteRootLogin yes		#Permitimos login con root y con password por facilidad.
+				PasswordAuthentication yes	#Esto normalmente es inseguro
+			service ssh restart
+			service sshd restart
+			service ssh status
+		Grupos: Añadimos el usuario a los distintos grupos para facilitar el trabajo con permisos
+			usermod -aG sudo user
+			usermod -aG docker user
+	- Redirigimos puertos: Opcion NAT, port forwarding. Añadimos el 42 para SSH y el 443
+		Ahora podemos conectarnos mediante "ssh root@localhost -p 42" o "ssh user@localhost -p 42"
+	- sudo nano /etc/hosts					#Cambiamos el dominio local, modificando el alias del localhost
+		127.0.0.1 login.42.fr localhost
+	- sudo nano /etc/sysctl.conf 			#Añadimos esta configuración para el uso de la RAM para evitar un warning
+		vm.overcommit_memory = 1				#al ejecutar posteriormente Redis, puesto que toma esta configuración del host.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+PARTE 4: INSTALACION CERTIFICADO SSL/TSL
+
+	Para asegurar la identidad de una página web a la que estemos accediendo y mantener una conexion segura
+	y encriptada, es necesario utilizar un certificado SSL. Sin este certificado, generalmente emitido por una
+	agencia certificadora externa (CA), no es posible asegurar la identidad del servidor al que nos conectamos,
+	de modo que los navegadores etiquetarán dichas conexiones como no seguras, llegando incluso a bloquearlas.
+	Aunque generalmente no es una práctica segura, en nuestro caso al estar creando un servidor completamente
+	privado, podemos utilizar un certificado autofirmado. Por razones obvias no es un método seguro de autenticación
+	en otros casos, puesto que somos "nosotros" firmando que efectivamente somos los dueños de dicho servidor.
+
+	Para utilizar OpenSSL, es necesario decidir tres elementos: el algoritmo de la clave, generalmente y por 
+	compatibilidad es RSA, el tamaño de a clave, que con RSA el estandar es de 2048, y el uso o no de una passphrase
+	o contraseña, que en nuestro caso no usaremos. Así el comando que utilizaremo será el siguiente:
+
+	sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+	-subj "/CN=$DOMAIN_NAME/C=SP/L=MADRID" \
+	-keyout /etc/ssl/private/$DOMAIN_NAME.key -out /etc/ssl/certs/$DOMAIN_NAME.crt
+	
+	#openssl: Comando base para llamar al programa openssl.
+	#req: Especifica que queremos generar una petición de firmado de un certificado, con distintos flags:
+		#-x509: Señala que en lugar de una petición, esto será un certificado autofirmado.
+		#-nodes: La clave privada no será encriptada y será añadida como texto plano.
+		#-days 365: En el caso de utilizar -x509 para un autofirmado, especifica la duracion de dicho certificado.
+		#-newkey rsa:2048: Genera una nueva petición de certificado y una clave privada, que en nuestro caso al
+			#ser el algoritmo rsa, seguirá el argumento rsa:nbits, donde nbits es el numero de bits de
+			#tamaño de dicha clave.
+		#-subj: Modifica la información del subject del certificado, es decir, el objetivo del certificado, como
+			#información del pais de origen, institución, o el nombre del dominio.
+		#-keyout: Especifica la dirección donde se añadirá el archivo con la clave privada
+		#-out: Permite añadir la dirección del archivo certificado.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+REFERENCIAS
+
+https://github.com/codesshaman/inception
+https://github.com/llescure/42_Inception
+https://github.com/vbachele/Inception
+https://github.com/twagger/inception
+https://github.com/Forstman1/inception-42
+https://github.com/Pablichu/inception
+
+https://www.digitalocean.com/community/tutorials/how-to-create-a-self-signed-ssl-certificate-for-nginx-on-debian-10
+https://www.digitalocean.com/community/tutorials/how-to-install-wordpress-with-docker-compose

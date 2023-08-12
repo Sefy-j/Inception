@@ -1,0 +1,73 @@
+INSTALACION HUGO
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+PARTE 1: CREACIÓN DE DOCKERFILE
+
+	- FROM: De nuevo usaremos alpine, una versión anterior a la última.
+	- ARG: Añadimos las direcciones del git y nombre del tema de Hugo que vamos a utilizar.
+	- WORKDIR: Cambiamos a la carpeta donde vamos a generar nuestra página web.
+	- RUN: Instalaremos hugo, además de git para poder descargar un theme adecuado. Hugo es un programa que permite generar
+		páginas web estáticas a partir de distintas plantillas. El uso más interesante es a través del uso de themes, que
+		descargaremos con github, que ya dan una base del tipo de página web a generar. Así, con solo copiar en las carpetas
+		adecuadas de hugo, el theme va a saber generar las distintas páginas, cada una con sus recursos estáticos como imágenes,
+		etc. La estructura genérica de carpetas la conseguimos mediante el uso de hugo new site, que genera dichas carpetas en
+		el path dado. Allí podemos clonar con git el theme adecuado. Por último, generamos nuestro usuario con los permisos
+		necesarios para no ejecutar el servidor como root.
+	- COPY: Copiamos todos los datos necesarios de nuestra página web dentro de la estructura de carpetas que hemos generado.
+		Es importante mantener dicha estructura, de modo que el content se copie en dicha carpeta, y los recursos estáticos en
+		la carpeta static correspondiente. Además, el archivo de configuración debe estar en el root de estas carpetas.
+		También copiaremos la script que vamos a utilizar. Es importante permitir que todos estos archivos puedan ser ejecutados
+		por Hugo.
+	- USER: Cambiamos al usuario creado para la ejecución.
+	- ENTRYPOINT: Debido a que debemos utilizar una script, el entrypoint será dicho archivo.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+PARTE 2: ARCHIVOS PÁGINA WEB
+
+	La estructura de archivos en nuestro caso es la siguiente:
+
+	- config.toml: Permite configurar todos los parámetros de la página web. Cada theme requiere una serie de parámetro únicos,
+		de modo que reciba así todos los datos que necesita el servidor para crear la página. En nuestro caso
+		los parámetros podemos verlos en la página del propio theme.
+			- baseURL: Señalamos la URL base que va a tener la página.
+			- theme: Nombre del theme a utilizar.
+			- title: Título de la página. Esto lo utiliza el propio theme.
+			- canonifyURLs: Esto modifica las URLs en nuestros archivos. En nuestro caso y tal y como llamamos a las imágenes
+				locales, debemos activarlo.
+			- menu: Permite generar los distintos botones del menú de acuerdo a los parámetros que pide el theme.
+			- params: Diversos parámetros que requiere el propio theme para distintos campos.
+	- Content: Aquí introducimos los archivos de las páginas principales que vamos a generar. Admite diversos métodos de
+		ordenación de directorio. En nuestro caso añadiremos los post principales de nuestro blog en posts, y la definición
+		del about en la carpeta con el mismo nombre. 
+			- posts: Son archivos .md donde hay que añadir el nombre de la página, la fecha y el cuerpo en HTML. Podemos
+				configurar así cada página a nuestro gusto, con links, imágenes, texto, etc. mediante HTML.
+			- about: En este caso con añadir el título es suficiente, puesto que el theme lo utilizará no como entrada
+				principal, sino como pequeña definición de la pagina.
+	- Static: Añadimos aquí todos los recursos estáticos que vamos a utilizar, como imágnes, etc.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+PARTE 3: SCRIPT EJECUCIÓN DEL SISTEMA
+
+	Utilizamos una script para poder sustituir la variable del nombre del dominio en el lanzamiento del servidor.
+	Como comando, lanzaremos el propio servidor de Hugo para poder visualizar la página, que luego veremos mediante
+	un proxy con nginx. Así, bindeamos el servidor a todas las interfaces, añadiendo el nombre de la URL, y eliminando el
+	puerto de la URL. Además, permitimos que los logs vayan a la salida estándar, para poder verlo fácilmente con docker logs.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+REFERENCIAS
+
+https://gohugo.io/installation/linux/
+https://gohugo.io/commands/
+https://gohugo.io/getting-started/quick-start/
+https://gohugo.io/getting-started/directory-structure/
+https://gohugo.io/getting-started/configuration/
+https://gohugo.io/getting-started/usage/#draft-future-and-expired-content
+
+https://github.com/vaga/hugo-theme-m10c

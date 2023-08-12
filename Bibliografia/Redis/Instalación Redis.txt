@@ -1,0 +1,68 @@
+INSTALACION REDIS 
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+PARTE 1: CREACIÓN DE DOCKERFILE
+
+	- FROM: De nuevo usaremos alpine, una versión anterior a la última.
+	- RUN: Instalaremos Redis. Es un servidor de estructura de datos que permite añadir funcionalidades extras a otro servicioss.
+			En nuestro caso, lo utilizaremos como gestor de caches. Así, las peticiones realizadas a Wordpress serán almacenadas
+			en la base de datos de Redis, de modo que si llega una petición nueva igual a una ya realizada, pueda ser entregada
+			la versión en el caché sin tener que realizar todas las peticiones a php que haría Wordpress. Esto permite reducir
+			los tiempos de carga de la página web, pues aquellas páginas más visitadas no tendrán que cargarse cada vez.
+	- COPY: Copiamos el archivo de configuración en la carpeta adecuada, sobreescribiendo el archivo por defecto, y con
+			los permisos adecuados.
+	- USER: Cambiamos el usuario redis que se crea al instalar el paquete, que será el que ejecutará el servidor.
+	- ENTRYPOINT: Lanzaremos el servidor señalando el archivo de configuración que hemos preparado, para que el sistema se
+			ejecute con los parámetros adecuados.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+PARTE 2: ARCHIVO CONFIGURACIÓN REDIS
+
+	En nuestro caso vamos a ejecutar redis con la configuración base, tan sólo modificando las opciones mínimas. Comenzamos
+	eliminando la linea de bind, de modo que el sistema pase a escuchar a cualquier ip. Además, desactivamos el sistema de
+	protección (protected-mode no), para permitir que efectivamente admite conexiones desde cualquier ip. En un entorno
+	conectado a la red externa esto sería peligroso, pero en nuestro caso nuestro servicio solo esta conectado al servidor de
+	Wordpress, de modo que no supone un problema de seguridad. Además, debido a la configuración estándar de docker, para evitar
+	un posible aviso del backlog modificamos la opción tcp-backlog 128, para adecuarlo al tamaño que va a tener dentro del
+	docker. Por último, añadimos las líneas maxmemory 20mb y maxmemory-policy allkeys-lru para controlar el máximo de memoria
+	que va a utilizar nuestro caché, y el método de borrado de las keys almacenadas en caso de superar dicha memoria. Esta es
+	la configuración estándar para el uso de redis como caché.
+	Podemos mantener el resto de opciones estándar.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+PARTE 3: INSTALACIÓN PLUGIN REDIS EN WORDPRESS
+
+	Debemos añadir dos variables a la lista de variables de wordpress, en el archivo
+	wp-config.php:
+	- define( 'WP_REDIS_HOST', 'redis' ); : Es necesario señalar el host donde va a encontrarse el servicio de redis. Al
+		encontrarse el contenedor en la misma red de docker, podemos llamarlo directamente por su nombre, ya que docker será
+		capaz de resolverlo por si mismo.
+	- define( 'WP_REDIS_PREFIX', getenv('WP_DB_NAME') ); : Sirve para evitar posibles coincidencias en nombres si
+			estuviesemos usando diversas bases de datos.
+
+	Además, debemos añadir el plugin de redis cache al propio wordpress, descargandolo y añadiendolo a la carpeta adecuada
+	de plugins en el contenedor de wordpress. El archivo object-cache.php ha de añadirse a wp-content, donde servirá de
+	instalador, mientras que el resto de la carpeta del plugin puede añadirse directamente a la subcarpeta plugins. Normalmente
+	sería más sencillo utilizar el cliente de worpdress para la instalación, tanto en su versión web como mediante el wp-cli
+	que permite utilizar comandos por consola, pero en nuestro caso con copiar el plugin en el lugar adecuado, es fácil de
+	activar ya que es un plugin del tipo drop-in. Este tipo de plugin generalmente modifica una funcionalidad del core de
+	wordpress, por lo que simplemente son activables añadiendo un archivo a la carpeta wp-content. En otros casos sería
+	necesario activarlo mediante el uso de otros comandos o funciones.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+REFERENCIAS
+
+https://redis.io/docs/getting-started/installation/install-redis-from-source/
+https://github.com/rhubarbgroup/redis-cache/blob/develop/INSTALL.md
+https://github.com/alleyinteractive/wp-redis/blob/main/object-cache.php
+https://wordpress.stackexchange.com/questions/4041/how-to-activate-plugins-via-code
+
+https://redis.io/docs/manual/client-side-caching/
+https://redis.io/docs/management/security/

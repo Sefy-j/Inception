@@ -1,0 +1,176 @@
+INSTALACION NGINX
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+PARTE 1: CREACIÓN DE DOCKERFILE
+
+	- FROM: Usaremos alpine, una versión anterior a la última (3.16 en este momento).
+	- ARG: Define una variable utilizada durante el build de la imagen. Estará definida en el docker compose.
+	- RUN: Utilizaremos apk, (la versión de apt en alpine) con el flag --no-cache para evitar guardar en el cache
+			del contenedor las imagenes. Instalaremos nginx y también openssl para poder generar el certificado
+			autofirmado, utilizando el comando correcto para generar dichos certificados dentro del contenedor.
+	- COPY: Por defecto, el archivo de configuración principal de nginx se encuentra en /etc/nginx, pero
+			nginx importa todos los archivos terminados en .conf que se encuentren dentro del carpeta adecuada,
+			(en nuestro caso al ser alpine será en /etc/nginx/http.d) por lo que es más correcto añadir allí
+			nuestro archivo de configuración, de modo que sea añadido automáticamente sin tener que modificar
+			la configuración base. Modificamos también los permisos para que sean los adecuados, y sólo sea
+			modificable por root.
+	- RUN: Nginx no sustituye variables de entorno en sus archivos de configuración .conf. Por lo tanto,
+			utilizaremos el comando sed para sustituir nosotros la variable $DOMAIN_NAME manualmente.
+	- EXPOSE: Al utilizar el protocolo HTTPS, el puerto a exponer será el 443.
+	- ENTRYPOINT: En este caso ejecutamos dentro del contenedor nginx activando la función -g para poder utilizar
+			el parametro "daemon off". Esto es porque de manera general, el contenedor solo comprueba la ejecución
+			de un programa principal y cuando este termina, el contenedor se cierra. Si inicializamos nginx con
+			daemon on, es decir, en el background, el contenedor no va a detectar un proceso principal en
+			funcionamiento, y se va a cerrar instantáneamente.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+PARTE 2: ARCHIVO CONFIGURACIÓN NGINX
+
+Nginx divide las configuraciones mediante bloques organizados jerárquicamente. Así, cuando hay una petición del
+cliente, el sistema decide que bloque es el que tiene la configuración adecuada para esa petición.
+
+- Server: Es el tipo principal de bloque, que define un servidor virtual con las normas necesarias para un cierto
+tipo de conexiones.
+
+	#Main Settings:
+	- listen: Es la ip/puerto que escuchara el bloque server. Por ejemplo, si defino el puerto 80, mi servidor
+			virtual escuchará a todo lo que llegue al puerto 80. En caso de múltiples opciones válidas con distintos
+			bloques server, utiliza tambien el siguiente parámtero (server_name) para definir cual es el más adecuado.
+			Añadimos también el parámetro "ssl" para especificar que las conexiones aceptadas han de seguir 
+			el modo SSL, que es necesario para las conexiones HTTPS.
+	- server_name: Sirve junto al listen para definir cual es la conexión que va a aceptar el bloque server. Así, en
+			nuestro caso añadimos el nombre del dominio adecuado. Podemos utilizar como host principal la versión con
+			o sin www. añadido. Además, para lograr que la versión que no queramos que sea por defecto redirija a la
+			que si, añadiremos un pequeño bloque server distinto, que escuche en el server name que no sea el estándar.
+			Ahi, mediante la directiva return, devolveremos al navegador una señal 301 señalando que la url pedida ha
+			sido permanentemente desactivada, y redirigiendolo a la url por defecto. El uso de las variables $scheme Y
+			$request_uri, permiten hacer esta redirección exactamente con la misma petición pero modificando el www.
+			$scheme es el protocolo (http o https), mientras que $request_uri en nuestro caso es la parte de la
+			dirección pedida que no incluye el host.
+	- root: Permite definir la carpeta raíz a partir de la cual el servidor buscará los archivos solicitados. Por
+			defecto en Alpine, esta sería la carpeta /var/www, pero nosotros al estar creando un wordpress Utilizaremos
+			la carpeta /var/www/wordpress que posteriormente vamos a generar al levantar el wordpress, y donde
+			almacenaremos toda su información necesaria.
+	- index: Por su parte, index es el archivo por defecto que intentará mostrar el servidor cuando la petición sea
+			la dirección de una carpeta, generalmente terminando en /. Así, en esos casos el servidor buscará un archivo
+			con el nombre especificado en la directiva index dentro de dicha carpeta. En nuestro caso, buscará primero
+			el index.php, y solo si no lo encuentra pasará a buscar index.html.
+	
+	#SSL Settings
+	- ssl_certificate: Al especificar que solo aceptaremos conexiones con HTTPS con ssl, debemos definir la localización
+			del certificado ssl de nuestra página, que habremos creado con openssl previamente.
+	- ssl_certificate_key: Similar al caso anterior, pero esta vez con la key privada de nuestro certificado.
+	- ssl_protocols: Permite definir que protocolo concreto de ssl vamos a utilizar. En nuestro caso utilizaremos el más
+			actualizado, el TLSv1.3.
+
+	#Location Settings
+	- location / : Al no existir ningún modificador, este location permite aceptar cualquier petición que empiece con /,
+			de modo que va a servir como localización por defecto si no hay otra coincidencia más exacta.
+		- try_files $uri /index.php$is_args$args : El comando try_files busca la existencia de los archivos con el nombre igual
+			al especificado en los distintos argumentos. En caso de que no exista ninguno, se produce una redirección
+			interna al último argumento. Al ser una redirección, podría ser gestionado por un bloque location distinto.
+			Así, en este caso busca la existencia de un archivo con el $uri pedido (la parte de la petición una vez
+			eliminado el host, los argumentos de query_string, etc), en caso de no existir, busca el mismo elemento
+			añadiendo / al final por si fuese un directorio, y en caso de que este tampoco exista, redirecciona al
+			index.php añadiendo los argumentos necesarios para la consulta en la base de datos. Estos $args son
+			las $query_string que aparecen en la url después de un símbolo ?. Son los parámetros que va a necesitar
+			wordpress para hacer una consulta a la base de datos y devolver la página correcta. En este caso, este símbolo
+			lo añadimos utilizando $is_args, que se expande a ? cuando $args no es nulo, de modo que en caso de que no 
+			exista $args simplemente devolveremos index.php sin argumentos.
+
+	- location ~ [^/]\.php(/|$) : Este bloque interceptará todas las peticiones terminadas en .php, incluso si estas tienen
+			argumentos extra en el path que deba interpretar el servidor de FastCGI (PATH_INFO), es decir, la parte del
+			path que se encuentra tras el archivo .php. Por ejemplo, en el caso /test/index.php/more, sería el /more.
+			El símbolo ~ señala a nginx que el parámetro de búsqueda va a ser una expresión regular teniendo en cuenta
+			las mayúsculas. Este tipo de expresiones permite encontrar coincidencias en un string de acuerdo a las
+			condiciones que queramos.
+				- [^/]\.php(/|$): El símbolo [^ ] indica que para que exista una coincidencia adecuada, ninguno de los
+				caracteres que aparezcan dentro de [] son válidos, de modo que solo aceptará aquellas peticiones que no
+				incluyan una / justo antes del .php. El símbolo de . (en \.php) va escapado (.\) para distinguirlo del
+				parámetro . que en estas expresiones es una wildcard de un carácter. La parte de (/|$) señala que acepta
+				cualquier substring que termine en / tras el .php, o en el que .php sea el final de la línea (de acuerdo
+				al símbolo $).
+			Estas peticiones serán redirigidas (proxy server) al servidor de fastcgi, que en nuestro caso será el wordpress.
+			Este servidor interpretará estas peticiones, las relacionará con la base de datos como sea necesario, y
+			devolverá la página correcta de acuerdo a estos argumentos.
+		- fastcgi_split_path_info ^(.+?\.php)(/.*)$ : De acuerdo al funcionamiento estándar del FastCGI, cuando este recibe una
+			petición tal como /test.jpg/index.php, el proceso intentará ejecutar este index.php, pero si este archivo no
+			existe, procederá a tratar de ejecutar test.jpg, considerando index.php como información adicional del path
+			de dicha script. Esto produce una vulnerabilidad, especialmente si mi servidor permite a los usuarios subir
+			archivos al mismo, ya que pueden aprovechar esta funcionalidad para ejecutar un archivo .php malicioso.
+			Debido a esto, en vez de ejecutar el .php directamente, utilizaremos este comando para definir manualmente la
+			parte de la petición que será interpretada como script, y la que será interpretada como parte extra del path.
+			Esta directiva inicializa las variables $fastcgi_script_name como el resultado del primer paréntesis de la expresión
+			regular, y $fastcgi_path_info con el segundo paréntesis de dicha expresión. Así, siguiendo la configuración
+			base añadida en fastcgi_params, la primera de estas variables sirve para definir el parámetros SCRIPT_NAME
+			necesario para el funcionamiento del FastCGI, mientras que la segunda variable la utilizaremos para definir el valor
+			de PATH_INFO.
+				- ^(.+?\.php) : El símbolo ^ indica que esta expresión debe hallarse al principio de la línea. Por su parte, el
+				símbolo . unido al + señala que acepta cualquier caracter una o más veces, mientras que el símbolo ? hace que
+				pare la evaluación cuando encuentre el conjunto .php por primera vez.
+				- (/.*)$ : En este caso, acepta cualquier elemento que empiece por / seguido de cero o más caracteres cualquiera,
+				siempre que el patrón se encuentre al final de la línea, tal y como exige el símbolo $.
+		- try_files $fastcgi_script_name =404 : Para evitar las vulnerabilidades antes mencionadas, podemos desactivar la
+			función del servidor php que autocorrige las direcciones, o en nuestro caso y ya que tenemos acceso a los
+			archivos que ejecutará el servidor de FastCGI al estar en la misma máquina (aunque no en el mismo contenedor),
+			probaremos la existencia primero de la script a ejecutar con un try_files. En caso afirmativo, se ejecutará de
+			manera normal, mientras que en caso contrario daremos un error 404 evitando la ejecución de php maliciosos.
+		- set $path_info $fastcgi_path_info : Debido al funcionamiento del try_files, la variable $fastcgi_path_info
+			es tras su uso, por lo que guardamos su valor original para poder utilizarlo más adelante. Cuando try_files intenta
+			mandar una petición nueva, el split de antes borra el fastcgi_path_info. Por eso es importante guardarlo antes.
+		- fastcgi_pass wordpress:9000 : Permite configurar la dirección del servidor de FastCGI que utilizaremos. En nuestro
+			caso será nuestro servidor de wordpress, que estará escuchando en el puerto 9000. Así, todas las conexiones serán
+			redirigidas a este servidor. Podemos llamar directamente al servidor "wordpress" debido a que gracias al networking
+			de docker-compose, este aparecerá como hostname válido en la lista de dns de docker.
+		- fastcgi_index index.php : De un modo similar al funcionamiento del índice estándar en nginx, este parámetro permite
+			definir cuál será el índice por defecto que se añadirá a las peticiones acabadas en /, es decir, a las peticiones
+			de carpetas.
+		- include fastcgi_params : Debido a que FastCGI es un protocolo distinto que no puede leer directamente los encabezados
+			html, debemos asegurarnos que dispone de la información adecuada. Así, una manera muy común es incluir el archivo
+			fastcgi_params, que tiene una configuración estándar de muchos de estos parámetros.
+		- fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name : Se trata de la localización de la script que ha de
+			ejecutar el servidor php. $document_root es la carpeta definida con el comando root, que unido a $fastcgi_script_name
+			nos permite obtener el path completo de la script a ejecutar.
+		- fastcgi_param PATH_INFO $path_info : Por su parte, en esta variable guardaremos los argumentos extra de la script,
+			utilizando la variable $path_info que habíamos reservado anteriormente.
+	- location ~ ^/adminer$: Añadimos esta location para el bonus del adminer. En este caso la idea es similar al bloque
+		anterior, pero no es necesario hacer un split del path porque siempre vamos a devolver el mismo archivo index.php,
+		puesto que es el único archivo que necesita ejecutar adminer. La expresión que utilizamos admite una petición que
+		sea exactamente /adminer.
+	- location ~ ^/adminer(/.*$): Este bloque lo utilizaremos de redirección al bloque anterior, de modo que cualquier petición
+		que empiece en /adminer, aunque tenga cualquier extra añadido, sea redirigido directamente al bloque de adminer.
+	- location ^~ /static: Utilizaremos este bloque para responder a las peticiones de la página web estática que hemos creado
+		para el bonus. Así, esta página creada por Hugo estará levantada por su propio servidor, y nosotros haremos de proxy
+		con el nginx para conectarnos a dicha página. El símbolo inicial (^~) sirve para que en el caso de que esta location sea
+		seleccionada inicialmente (aquellas locations sin expresiones regulares se escogen primero), en lugar de intentar
+		evaluar las expresiones regulares, se queda con este resultado.
+		- proxy_set_header: Se trata de una serie de variables que debemos definir. Normalmente valdría con incluir proxy_params,
+			pero nuestra versión de nginx no dispone de dicho archivo, así que lo añadimos manualmente.
+		- proxy_pass http://hugo:1313/static; : Señalamos la dirección del servidor al que vamos a realizar la conexión proxy.
+			En nuestro caso, es simplemente el contenedor de hugo en su puerto 1313.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+REFERENCIAS
+
+https://nginx.org/en/docs/beginners_guide.html
+https://www.digitalocean.com/community/tutorials/understanding-the-nginx-configuration-file-structure-and-configuration-contexts
+https://www.digitalocean.com/community/tutorials/understanding-nginx-server-and-location-block-selection-algorithms
+https://www.digitalocean.com/community/tutorials/nginx-location-directive
+
+http://nginx.org/en/docs/http/ngx_http_core_module.html#listen
+https://www.digitalocean.com/community/tutorials/how-to-redirect-www-to-non-www-with-nginx-on-ubuntu-14-04
+
+https://docs.nginx.com/nginx/admin-guide/security-controls/terminating-ssl-http/
+
+https://www.nginx.com/resources/wiki/start/topics/recipes/wordpress/
+http://nginx.org/en/docs/http/request_processing.html#simple_php_site_configuration
+https://www.nginx.com/resources/wiki/start/topics/examples/phpfcgi/
+https://www.digitalocean.com/community/tutorials/how-to-install-wordpress-with-docker-compose
+https://www.digitalocean.com/community/tutorials/understanding-and-implementing-fastcgi-proxying-in-nginx
+https://stackoverflow.com/questions/20848899/nginx-phpfpm-path-info-always-empty
+https://learn.microsoft.com/en-us/dotnet/standard/base-types/regular-expression-language-quick-reference

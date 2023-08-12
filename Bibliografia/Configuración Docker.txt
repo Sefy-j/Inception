@@ -1,0 +1,106 @@
+CONFIGURACIÓN DOCKER Y DOCKER-COMPOSE
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+PARTE 1: CREACIÓN DE DOCKERFILE
+
+	- FROM: Sirve para elegir la versión base donde a partir de la que vamosa a generar nuestro container.
+			En nuestro caso usamos alpine en todos los servicios, específicamente una versión anterior a la última 
+			(3.16 en este momento), ya que es una imagen muy ligera.
+	- WORKDIR: Permite establecer la carpeta por defecto sobre la que se realizarán los comandos del dockerfile.
+			Generará todo el árbol de directorios que sea necario, incluyendo carpetas intermedias.
+	- USER: Permite definir el usuario que ejecutará los subsecuentes RUN durante el montaje, o el ENTRYPOINT
+			durante la ejecución. Si el usuario no es uno por defecto, debe ser creado previo a esta instrucción.
+	- ARG: Sirve para definir variables de entorno que serán utilizadas durante la fase de creación de la imagen
+			(build). En nuestro caso el valor lo obtendremos mediante el docker compose.
+	- RUN: Permite utilizar un comando determinado en la generación del contenedor. Generalmente utilizaremos apk
+			(la versión de apt en alpine). Añadimos --no-cache para que no guarde en el contenedor las imagenes
+			descargadas en el cache, puesto que es innecesario y ocupa más espacio. Es importante utilizar && entre
+			los distintos comandos, de modo que si fallase uno, se detiene la creación del contenedor. 
+			Cada llamada a RUN genera una capa nueva, por lo que salvo que sea necesario, intentaremos encadenar
+			todos los comandos de instalación en un único RUN.
+	- COPY: Copia los archivos señalados dentro del contenedor, de modo que resulten accesibles para el mismo.
+	- EXPOSE: Permite definir el puerto en el que escuchara el contenedor. Sirve solo para definir el puerto por defecto
+			que utilizará este contenedor cuando lo ejecutemos, pero no hace que este escuchando directamente.
+			Es útil como documentación.
+	- ENTRYPOINT: Se trata del comando que ejecutará al inicializar el contenedor. La diferencia con RUN es que ese 
+			se usa en la generación del contenedor, mientras que ENTRYPOINT es en la ejecución de dicho contenedor.
+			En general, si queremos lanzar simplemente un ejecutable es más interesante usar ENTRYPOINT que usar CMD,
+			ya que este último lo que haría sería llamar al ejecutable desde una shell, que es el entrypoint por
+			defecto.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+PARTE 2: CREACIÓN DE DOCKER-COMPOSE
+
+	Docker compose es un método de creación y administración de múltiples contenedores simultáneamente, de modo que
+	utilizando un único set de comandos podamos poner en funcionamiento todos nuestros servicios a la vez. Está basado en un
+	archivo .yaml (también llamado .yml), desde donde el sistema lee los distintos comandos que ha de ejecutar docker, de modo
+	que todos ellos sean lanzados de manera automática. Así, podemos dar datos del nombre de la imagen, puertos a utilizar,
+	dependencias, redes, etc. todo en un mismo archivo, que el sistema leerá automáticamente. Es muy importante mantener la
+	indentación adecuada. Se divide en diversos bloques principales:
+
+	- version: Puede ser omitido. Señala la versión de docker compose que utiliza el conjunto de imágenes en este archivo.
+		No se relaciona directamente con la versión de docker, ni con la del propio ejecutable de docker compose, siendo un
+		valor distinto a ambos.
+	- services: Permite definir todos mis servicios, cada uno definido en un único contenedor por un nombre único.
+		- nombre del servicio: Agrupa todas las características que va a tener dicho contenedor.
+			- container_name: Nombre que recibirá el contenedor al lanzarse.
+			- build: Permite distintos valores necesarios durante el proceso de creación de la imagen. Dependiendo del tipo y
+				número de atributos, es posible utilizarlo directamente para señalar la ubicación del dockerfile directamente.
+				- context: Dirección de un dockerfile válido a partir del cúal se generará la imagen.
+				- args: Permite añadir como argumentos de construcción (build) las variables deseadas. Estas podrán ser utilizadas
+					por el dockerfile correspondiente, pero sólo se mantienen durante la fase de construcción.
+		- ports: Permite exponer los puertos necesarios, enlazándolos al puerto del host que deseemos.
+		- depends_on: Según estas dependencias, los servicios serán creados y lanzados en orden, de modo que siempre se lancen 
+			después de aquellos de los que dependan.
+		- environment: Añade las variables deseadas como variables de entorno dentro de la imagen. Estas variables son visibles
+			sólo durante la ejecución, no durante el montaje de la imagen.
+		- volumes: Permite definir los distintos volúmenes de archivos que utilizará el contenedor. Se trata de un sistema de
+			archivos persistente, que permite tanto mantener los datos incluso cuando el contenedor se elimina, como utilizarlo
+			para compartir archivos entre distintos contenedores. Estos volúmenes tienen que ser definidos en un bloque superior
+			llamado volumes, donde podemos añadir sus características de acuerdo a nuestras necesidades. En nuestro caso,
+			utilizamos volúmenes con nombre, que docker generará inicialmente en su localización por defecto para volúmenes, y
+			que uniremos a una carpeta interna del propio contenedor (nombre_del_volumen:path/dentro/del/contenedor). Nosotros
+			utilizaremos dos volúmenes distintos, uno con los datos del propio wordpress, que ha de ser accesible tanto por
+			nginx como por php, y otro con la propia base de datos.
+		- networks: Aquí podemos señalar la red interna de docker a la que se conectará cada contenedor. De nuevo, estás serán
+			creadas según distintas posibilidades en un bloque superior y externo llaamdo networks. Nosotros crearemos dos redes
+			independientes, una que una el servidor nginx con el de php, y otro el de php con la base de datos, manteniendo así
+			ambos sistemas aislados uno de otro.
+		- restart: Señala si el sistema ha de lanzarse de nuevo en caso de errores. En este caso intenta arrancar cada vez que
+			se caiga, por la razón que sea.
+	- networks: Permite definir las redes que utilizarán los contenedores. Existen distintos tipos, siendo por defecto una red
+		tipo bridge sin acceso directo a la red externa al host. Este será el caso de nuestras dos redes, por lo que solo
+		debemos darle nombre a las mismas, permitiendo que se generen por defecto.
+	- volumes: Permite señalar las distintas características de los volúmenes a utilizar. Al estar obligados a crear los
+		volúmenes en cierta localización, añadimos dicha localización en la opción device de driver_opts, dejando las
+		opciones de tipo como none (para señalar que este punto de montaje no se refiere a una partición física) y
+		o (de options) como bind, de modo que el volumen se monte señalando (bind) a una carpeta de nuestro host.
+		Además de las opciones del driver de montaje, podriamos señalar el tipo de driver a usar, pero en nuestro caso no es
+		necesario.
+	- Archivo .env: Las variables de entorno, tanto las pasadas como args como las pasadas como environment, idealmente no
+		deberían estar directamente añadidas al propio docker compose. Así, en nuestro caso utilizamos un archivo .env
+		(que no debería ser accesible públicamente, por ejemplo en github) para introducir nuestras variables. Esto permite que
+		incluso ciertas variables secretas, como contraseñas, se mantengan más seguras. Sin embargo, este sistema tiene sus
+		propios fallos, ya que si las variables son añadidas como args, estas son visibles si tenemos acceso a la imagen creada,
+		sin siquiera tener acceso al propio contenedor en funcionamiento. A su vez, si son añadidas como variables de entorno,
+		estas son visibles para cualquier proceso dentro del contenedor, y es posible que se vean comprometidas. Así, hay que
+		tener cuidado en el caso de manejar variables importantes. Un método alternativo podría ser el uso de los secretos de
+		docker (docker secrets), que permiten mantener este tipo de valores aislados. Sin embargo, en un principio su uso Está
+		limitado al uso de docker swarm, por lo que queda fuera del alcance de este proyecto.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+REFERENCIAS
+
+https://docs.docker.com/get-started/
+https://www.digitalocean.com/community/conceptual-articles/introduction-to-containers
+https://docs.docker.com/compose/compose-file/
+https://docs.docker.com/compose/networking/
+https://docs.docker.com/compose/compose-file/07-volumes/
+Docker Containers 101 https://www.youtube.com/watch?v=eGz9DS-aIeY
+Docker Networking https://www.youtube.com/watch?v=bKFMS5C4CG0
+Docker Compose https://www.youtube.com/watch?v=DM65_JyGxCo

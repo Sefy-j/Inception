@@ -1,0 +1,118 @@
+INSTALACION MARIADB
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+PARTE 1: CREACIÓN DE DOCKERFILE
+
+	- FROM: De nuevo usaremos alpine, una versión anterior a la última.
+	- ARG: Permite activar las variables de entorno necesarias durante la construcción de la imagen. Estas variables están
+			definidas en el docker compose.
+	- RUN: Instalaremos MariaDB y el cliente. Debido a un bug de la última versión de MariaDB, la carpeta donde normalmente
+			se genera el socket para realizar la conexión del servidor no se crea en la instalación. Una opción sería
+			crearla aquí con los permisos adecuados, pero en nuestro caso es más sencillo modificar la carpeta a una que
+			si se crea en el archivo de configuración de MariaDB.
+	- COPY: De nuevo, y aunque podriamos modificar el archivo de configuración de MariaDB .cnf directamente, es más seguro
+			añadir nuestros archivos a la carpeta /etc/my.cnf.d/ que es donde el servidor va a buscar archivos de
+			configuración terminados en .cnf. Además, copiaremos también un archivo .sql que utilizaremos como init-file
+			para que el servidor ejecute determinados comandos iniciales de sql al lanzarse. Ambos han de copiarse con los
+			permisos adecuados, en nuestro caso utilizando la flag chown para hacer que el dueño de dichos archivos sea el
+			usuario mysql y el grupo con el mismo nombre, que van a ser los que utilizaremos para ejecutar el servidor.
+			Además, añadimos el flag chmod para asegurarnos que el archivo de configuración no puede ser modificado por
+			cualquier usuario, puesto que por seguridad mysql no admite archivos de configuración libres.
+	- RUN: Debemos utilizar una nueva llamada a RUN para realizar el proceso de instalación de mysql una vez añadidos los
+			archivos de configuración a la carpeta correcta. Además, ya que los archivos .sql no expanden las variables,
+			utilizamos el comando sed para expandir las distintas variables necesarias para poder ejecutar dichos comandos.
+	- ENTRYPOINT: Ejecutaremos el servidor llamando a mysqld, el servidor de mysql, que se ejecutará de acuerdo a la
+			configuración que hemos añadido previamente.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+PARTE 2: ARCHIVO CONFIGURACIÓN MARIADB
+
+	MariaDB utiliza archivos .cnf para la configuración del servidor y sus características. Dichos archivos pueden añadirse
+	a distintas localizaciones según el alcance de dicha configuración, si es a nivel general, del usuario en concreto, etc.
+	En nuestro caso, al querer modificar la configuración para todo el sistema, utilizaremos la carpeta estándar de archivos
+	incluidos /etc/my.cnf.d/ donde el servidor va a buscar cualquier archivo .cnf añadido allí. Además. por seguridad, MariaDB
+	no tiene en cuenta archivos .cnf con permisos de escritura libres para cualquier usuario. En general, han de ser archivos
+	cuyo dueño sea el usuario mysql que usará el servidor por defecto, y con permisos limitados (por defecto 664).
+
+	El archivo de configuración utiliza distintos bloques de acuerdo a que parte del sistema queremos modificar. Generalmente
+	cada elemento, como el servidor o el cliente, es capaz de leer configuración de distintos bloques, de modo que se pueden
+	agrupar ciertas configuraciones y separar otras según sea necesario.
+
+	- [client-server]: Modifica tanto a todos los clientes como a MariaDB. Añadiremos aquí las configuraciones comunes a ambas.
+		- port = 3306: Permite señalar el puerto a utilizar. Generalmente será el 3306.
+		- socket = /var/lib/mysql/mysqld.sock: Modifica la localización por defecto del socket que usará mysql. En nuestro
+			caso utilizamos /var/lib/mysql en vez de la localización por defecto debido a que dicha carpeta no se generá
+			durante la instalación, así que usamos una que si se crea, evitando tener que generar una nueva.
+	- [mysql_install_db]: Configuraciones del instalador de mysql. Dicho instalador lee configuraciones de este bloque y del
+			bloque mysqld.
+		- skip-test-db: De manera general, la instalación de MariaDB genera una base de datos de prueba, y una serie de usuarios
+			anónimos, es decir, sin nombre. Dichos usuarios y base de datos generalmente han de ser eliminados por seguridad
+			antes de poder utilizar el servidor fuera de producción. Así, para evitar tener que hacer este borrado, esta opción
+			evita que se generen desde un principio estos usuarios.
+		- datadir = /var/lib/mysql: Permite señalar la dirección donde se van a almacenar los archivos. Este es más común.
+	- [mysqld]: Añadimos aquí las configuraciones para el servidor.
+		- user = mysql: Este será el usuario por defecto que lanzará el servidor. Así evitamos que el servidor se ejecuté como
+			root, lo cuál podría suponer problemas de seguridad. También modifica el usuario del instalador.
+		- skip-networking = false: Esta opción desactivaría las conexiones por TCP/IP. Sin embargo, en nuestro caso debemos
+			eliminarla ya que vamos a usar precisamente ese tipo de conexiones para conectarnos desde otro contenedor.
+		- bind-address = 0.0.0.0: Permite aceptar cualquier conexión desde cualquier IP. Esto es importante porque docker
+			generá direcciones IP nuevas al lanzar los contenedores, por lo que no podemos señalar una dirección concreta.
+			Podría ser un problema de seguridad, pero sin embargo nuestro contenedor solo esta conectado al wordpress
+			directamente, sin conexión a la red externa, por lo que realmente no estamos abiertos a conexiones extrañas.
+		- init-file = /etc/my.cnf.d/initfile.sql: Permite ejecutar un archivo con ordenes sql al iniciar el servidor. lo
+			utilizaremos para configurar un par de elementos de seguridad, así como para generar la base de datos que 
+			necesitamos para que nuestro wordpress funcione.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+PARTE 3: ARCHIVO INICIAL SQL
+
+	De manera general, y especialmente en versiones anteriores, es recomendable ejecutar el archivo mysql_secure_installation
+	como paso previo al primer lanzamiento del servidor. Esta script eliminaría los usuarios anónimos, la conexión a root en
+	remoto, etc. Sin embargo la gran mayoría de estos elementos ya no son estrictamente necesarios. Por un lado, podemos evitar
+	la creación de la base de datos test y los usuarios anónimos mediante el archivo de configuración, tal y como hemos hecho.
+	Además, MariaDB por defecto utiliza como método de autentificación un sistema mediante los sockets de unix. En lugar de
+	pedir la contraseña, comprueba que el usuario de linux que intenta conectarse corresponde con un usuario existente en la
+	base de datos, y en caso afirmativo realiza la conexión sin pedir contraseña. Así, una conexión desde la terminal con el
+	usuario root conecta directamente al root de la base de datos. Esto se hace así debido a que en realidad, si ya has logrado
+	introducirte como root en el sistema, tienes acceso por defecto a todo, de modo que la contraseña solo supone un paso extrañas
+	e irrelevante.
+	Así, la instalación ahora solo genera un usuario root@localhost, que se conecta por defecto por autentificación de socket,
+	aunque también tiene la opción de conectarse mediante contraseña, que ha de modificarse por una nueva la primera vez que
+	se accede al sistema. Del mismo modo, se genera un super usuario con el nombre del usuario por defecto de mysql, en el caso
+	de querer evitar la conexión directa a root pero queriendo mantener un super usuario para modificar todo el sistema. Dicho
+	super usuario utiliza también la autentificación dual por socket de unix y por contraseña.
+
+	- ALTER USER IF EXISTS 'root'@'localhost' IDENTIFIED VIA unix_socket OR mysql_native_password
+		USING PASSWORD('$MADB_ROOT_PASSW'); : Permite modificar el usuario que deseemos, en nuestro caso nuestro root,
+		manteniendo la autentificación dual por socket y por contraseña. Añadimos nuestra contraseña deseada. La
+		cláusula IF EXISTS provoca que en caso de no existir dicho usuario (en esta situación eso es imposible), el
+		programa no falle, sino que solo de un aviso y continúe con la ejecución. Es importante tener en cuenta que
+		cualquier error completo para la ejecución de este archivo en esa línea, por lo que podrían generarse errores
+		de seguridad si no utilizasemos este tipo de cláusulas.
+	- DROP USER IF EXISTS 'mysql'@'localhost'; : Aunque en caso de querer acceder a la base de datos como un super usuario
+		este usuario es más interesante que usar root, en nuestro caso no vamos a utilizarlo, por lo que lo eliminamos.
+	- CREATE DATABASE IF NOT EXISTS $WP_DB_NAME; : Generamos la base de datos del Wordpress siempre y cuando esta no exista
+		previamente.
+	- CREATE USER IF NOT EXISTS '$MADB_USER'@'%' IDENTIFIED BY '$MADB_PASSW'; : Del mismo modo, creamos el usuario adecuado
+		para modificar dicha base de datos, con la contraseña necesaria.
+	- GRANT ALL ON $WP_DB_NAME.* to '$MADB_USER'@'%'; : Damos permisos al usuario de Wordpress sobre su base de datos. los
+		asteriscos señalan que le damos permiso a todas las entradas de dicha base de datos.
+	- FLUSH PRIVILEGES; : Obligamos al servidor a actualizar en el acto la tabla de privilegios. Esto es importante porque
+		ciertos comandos no actualizan la tabla, por lo que a pesar de haberse modificado, pueden estar sin efecto hasta el
+		reinicio del sistema.
+
+---------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------
+
+REFERENCIAS
+
+https://www.digitalocean.com/community/tutorials/how-to-install-mariadb-on-ubuntu-20-04
+https://mariadb.com/kb/en/mysql_install_db/
+https://mariadb.com/kb/en/authentication-from-mariadb-104/
+https://jira.mariadb.org/browse/MDEV-20259
+https://jira.mariadb.org/browse/MDEV-26593
